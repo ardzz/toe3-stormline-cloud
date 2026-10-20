@@ -114,9 +114,17 @@ func (s *Saves) Commit(ctx context.Context, userID, expectedHead, rev int64, kee
 	return nil
 }
 
-// Abort queues a pending revision's blob; unknown revisions are a no-op.
+// abortUpload drops a pending revision if it still exists and queues its blob key unless a committed revision owns it.
+const abortUpload = `WITH gone AS (
+	DELETE FROM save_revisions WHERE user_id = $1 AND rev = $2 AND state = 'pending')
+	INSERT INTO blob_garbage (blob_key) SELECT $3 WHERE NOT EXISTS (
+		SELECT 1 FROM save_revisions WHERE blob_key = $3 AND state = 'committed')
+	ON CONFLICT DO NOTHING`
+
+// Abort ends an upload that will not commit. The key is queued even when the pending row is gone, because the
+// reservation may have been expired or its account deleted, and the key swept, while the blob was still being written.
 func (s *Saves) Abort(ctx context.Context, userID, rev int64) error {
-	_, err := s.pool.Exec(ctx, queuePending, userID, rev)
+	_, err := s.pool.Exec(ctx, abortUpload, userID, rev, save.BlobKey(userID, rev))
 	return err
 }
 

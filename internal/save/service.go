@@ -50,10 +50,10 @@ func (s *Service) Upload(ctx context.Context, userID, expectedHead int64, data [
 	if err != nil {
 		return Revision{}, errors.Join(err, s.store.Abort(context.WithoutCancel(ctx), userID, r.Rev))
 	}
-	// Every Commit failure leaves the blob to the garbage queue: a stale or lost reservation has already queued it,
-	// and a pending row that survives a transient failure is expired into the queue.
 	if err := s.store.Commit(ctx, userID, expectedHead, r.Rev, s.opts.Retention); err != nil {
-		return Revision{}, err
+		// An upload that does not commit is aborted. That queues its blob even if the reservation was expired or its
+		// account deleted, and the key swept, while the blob was still being written.
+		return Revision{}, errors.Join(err, s.store.Abort(context.WithoutCancel(ctx), userID, r.Rev))
 	}
 	return r, nil
 }

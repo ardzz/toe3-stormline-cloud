@@ -155,3 +155,58 @@ func TestLateWriteOfLostReservationIsSwept(t *testing.T) {
 		t.Fatalf("late blob = %v; want ErrNotFound", err)
 	}
 }
+
+// stallingBlobs runs beforePut ahead of each write, standing in for an upload that stalls before publishing.
+type stallingBlobs struct {
+	blob.Store
+	beforePut func()
+}
+
+func (s stallingBlobs) Put(ctx context.Context, key string, data []byte) error {
+	s.beforePut()
+	return s.Store.Put(ctx, key, data)
+}
+
+func TestLateWriteAfterSweepIsQueuedAgain(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	users, saves := postgres.NewUsers(pool), postgres.NewSaves(pool)
+	blobs, err := fsblob.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { blobs.Close() })
+	uid := newSaveUser(t, ctx, users, "alice")
+	key := save.BlobKey(uid, 1)
+	sweepAt := func(at time.Time) (int, error) {
+		return save.NewSweeper(saves, blobs, func() time.Time { return at }).Sweep(ctx)
+	}
+	var deleteErr, sweepErr error
+	var swept int
+	beforePut := func() {
+		_, deleteErr = users.Delete(ctx, "alice")
+		swept, sweepErr = sweepAt(time.Now().Add(2 * time.Hour))
+	}
+	svc := save.NewService(saves, stallingBlobs{Store: blobs, beforePut: beforePut},
+		save.Options{MaxBytes: 1 << 20, Retention: 20})
+	data := gzipBytes(t, "late")
+	_, err = svc.Upload(ctx, uid, 0, data, save.Meta{SHA256: sha256Hex(data), Reason: "manual"})
+	if deleteErr != nil || sweepErr != nil || swept != 1 {
+		t.Fatalf("beforePut: Delete = %v; Sweep = %d, %v; want nil, 1, nil", deleteErr, swept, sweepErr)
+	}
+	if !errors.Is(err, save.ErrReservationLost) {
+		t.Fatalf("Upload = %v; want ErrReservationLost", err)
+	}
+	if got, err := blobs.Get(ctx, key); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("late blob = %q, %v; want uploaded bytes", got, err)
+	}
+	if keys := garbageKeys(t, ctx, saves); len(keys) != 1 || keys[0] != key {
+		t.Fatalf("garbage = %v; want [%s]", keys, key)
+	}
+	if n, err := sweepAt(time.Now().Add(2 * time.Hour)); err != nil || n != 1 {
+		t.Fatalf("final Sweep = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := blobs.Get(ctx, key); !errors.Is(err, blob.ErrNotFound) {
+		t.Fatalf("swept blob = %v; want ErrNotFound", err)
+	}
+}

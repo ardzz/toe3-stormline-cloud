@@ -159,11 +159,15 @@ func TestSavesAbortExpireAndLostReservation(t *testing.T) {
 	if err := saves.Abort(ctx, uid, 99); err != nil {
 		t.Fatalf("Abort(unknown) = %v, want nil", err)
 	}
-	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, []string{r1.BlobKey}) {
+	want := []string{r1.BlobKey, save.BlobKey(uid, 99)}
+	slices.Sort(want)
+	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, want) {
 		t.Fatalf("garbage after Abort = %v", got)
 	}
-	if err := saves.ForgetGarbage(ctx, r1.BlobKey); err != nil {
-		t.Fatal(err)
+	for _, key := range want {
+		if err := saves.ForgetGarbage(ctx, key); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := garbageKeys(t, ctx, saves); len(got) != 0 {
 		t.Fatalf("garbage after Forget = %v", got)
@@ -342,5 +346,28 @@ func TestGarbageKeysHoldsRecentlyQueuedKeys(t *testing.T) {
 	}
 	if keys, err := saves.GarbageKeys(ctx, time.Now().Add(time.Minute), 10); err != nil || !slices.Equal(keys, []string{r.BlobKey}) {
 		t.Fatalf("eligible garbage = %v, %v; want [%s]", keys, err, r.BlobKey)
+	}
+}
+
+func TestAbortNeverQueuesACommittedBlob(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	saves := postgres.NewSaves(pool)
+	uid := newSaveUser(t, ctx, postgres.NewUsers(pool), "alice")
+	r, err := saves.Reserve(ctx, uid, 0, pendingRev(time.Now().UTC().Truncate(time.Microsecond)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Commit(ctx, uid, 0, r.Rev, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Abort(ctx, uid, r.Rev); err != nil {
+		t.Fatal(err)
+	}
+	if keys := garbageKeys(t, ctx, saves); len(keys) != 0 {
+		t.Fatalf("garbage = %v; want none", keys)
+	}
+	if head, err := saves.Head(ctx, uid); err != nil || !sameRevision(head, r) {
+		t.Fatalf("Head = %+v, %v; want %+v", head, err, r)
 	}
 }

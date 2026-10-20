@@ -82,6 +82,10 @@ func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error)
 	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
+	// Do not publish once the caller has given up: the key of an abandoned upload may already have been swept.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.root.Rename(tmp, name); err != nil {
 		return err
 	}
