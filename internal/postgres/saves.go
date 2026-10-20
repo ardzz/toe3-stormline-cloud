@@ -169,9 +169,9 @@ func (s *Saves) ExpirePending(ctx context.Context, cutoff time.Time) (int64, err
 	return n, err
 }
 
-// GarbageKeys returns up to limit queued keys, oldest first.
-func (s *Saves) GarbageKeys(ctx context.Context, limit int) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT blob_key FROM blob_garbage ORDER BY enqueued_at, blob_key LIMIT $1`, limit)
+// GarbageKeys returns up to limit keys queued before queuedBefore, oldest first.
+func (s *Saves) GarbageKeys(ctx context.Context, queuedBefore time.Time, limit int) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT blob_key FROM blob_garbage WHERE enqueued_at < $1 ORDER BY enqueued_at, blob_key LIMIT $2`, queuedBefore, limit)
 	if err != nil {
 		return nil, err
 	}

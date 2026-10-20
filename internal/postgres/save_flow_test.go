@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ardzz/toe3-stormline-cloud/internal/blob"
 	"github.com/ardzz/toe3-stormline-cloud/internal/blob/fsblob"
@@ -46,7 +47,8 @@ func TestSaveFlowOnPostgres(t *testing.T) {
 	}
 	t.Cleanup(func() { blobs.Close() })
 	svc := save.NewService(saves, blobs, save.Options{MaxBytes: 1 << 20, Retention: 2})
-	sweeper := save.NewSweeper(saves, blobs, nil)
+	// Sweep as if two hours had passed, beyond the hour a queued blob is held for late writes.
+	sweeper := save.NewSweeper(saves, blobs, func() time.Time { return time.Now().Add(2 * time.Hour) })
 	uid := newSaveUser(t, ctx, users, "alice")
 	upload := func(head int64, payload string) (save.Revision, error) {
 		data := gzipBytes(t, payload)
@@ -113,5 +115,43 @@ func TestSaveFlowOnPostgres(t *testing.T) {
 		if _, err := blobs.Get(ctx, r.BlobKey); !errors.Is(err, blob.ErrNotFound) {
 			t.Fatalf("deleted account's blob %s = %v, want ErrNotFound", r.BlobKey, err)
 		}
+	}
+}
+
+func TestLateWriteOfLostReservationIsSwept(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	users, saves := postgres.NewUsers(pool), postgres.NewSaves(pool)
+	blobs, err := fsblob.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { blobs.Close() })
+	uid := newSaveUser(t, ctx, users, "alice")
+	r, err := saves.Reserve(ctx, uid, 0, pendingRev(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := users.Delete(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	sweepAt := func(at time.Time) (int, error) {
+		return save.NewSweeper(saves, blobs, func() time.Time { return at }).Sweep(ctx)
+	}
+	if n, err := sweepAt(now); err != nil || n != 0 {
+		t.Fatalf("early Sweep = %d, %v; want 0, nil", n, err)
+	}
+	if err := blobs.Put(ctx, r.BlobKey, gzipBytes(t, "late")); err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Commit(ctx, uid, 0, r.Rev, 20); !errors.Is(err, save.ErrReservationLost) {
+		t.Fatalf("late Commit = %v; want ErrReservationLost", err)
+	}
+	if n, err := sweepAt(now.Add(2 * time.Hour)); err != nil || n != 1 {
+		t.Fatalf("late Sweep = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := blobs.Get(ctx, r.BlobKey); !errors.Is(err, blob.ErrNotFound) {
+		t.Fatalf("late blob = %v; want ErrNotFound", err)
 	}
 }

@@ -68,27 +68,22 @@ func TestUploadPassesStaleReservation(t *testing.T) {
 }
 
 func TestUploadAbortsWhenBlobWriteFails(t *testing.T) {
-	boom := errors.New("disk full")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	store, blobs := &scriptedStore{}, newMemBlobs()
-	blobs.putErr = boom
+	blobs.putErr = context.Canceled
 	data, meta := validUpload(t)
-	_, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta)
-	if !errors.Is(err, boom) || !slices.Equal(store.aborts, [][2]int64{{7, 1}}) || len(store.commits) != 0 {
+	_, err := newTestService(store, blobs).Upload(ctx, 7, 0, data, meta)
+	if !errors.Is(err, context.Canceled) || !slices.Equal(store.aborts, [][2]int64{{7, 1}}) || len(store.commits) != 0 {
 		t.Fatalf("err %v, aborts %v, commits %v", err, store.aborts, store.commits)
 	}
-}
-
-func TestUploadDeletesBlobWhenReservationLost(t *testing.T) {
-	store, blobs := &scriptedStore{commitErr: ErrReservationLost}, newMemBlobs()
-	data, meta := validUpload(t)
-	_, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta)
-	if !errors.Is(err, ErrReservationLost) || !slices.Equal(blobs.deleted, []string{"u/7/1.json.gz"}) || len(blobs.data) != 0 {
-		t.Fatalf("err %v, deleted %v, left %d", err, blobs.deleted, len(blobs.data))
+	if !slices.Equal(store.abortCtxErrs, []error{nil}) {
+		t.Fatalf("abort context errors = %v; want [nil]", store.abortCtxErrs)
 	}
 }
 
-func TestUploadLeavesCleanupToTheStoreOnOtherCommitFailures(t *testing.T) {
-	for _, commitErr := range []error{&StaleError{Latest: 9}, errors.New("connection reset")} {
+func TestUploadLeavesCleanupToTheStoreOnCommitFailures(t *testing.T) {
+	for _, commitErr := range []error{ErrReservationLost, &StaleError{Latest: 9}, errors.New("connection reset")} {
 		store, blobs := &scriptedStore{commitErr: commitErr}, newMemBlobs()
 		data, meta := validUpload(t)
 		_, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta)
@@ -115,11 +110,38 @@ func TestLatestAndGet(t *testing.T) {
 	if _, _, err := svc.Latest(ctx, 7); !errors.Is(err, ErrBlobMissing) {
 		t.Fatalf("Latest with missing blob = %v", err)
 	}
+	blobs.getErr = errors.New("read failed")
+	if _, _, err := svc.Latest(ctx, 7); !errors.Is(err, blobs.getErr) || errors.Is(err, ErrBlobMissing) {
+		t.Fatalf("Latest with read error = %v; want read failed, not ErrBlobMissing", err)
+	}
 	store.headErr, store.byRevErr = ErrNoSaves, ErrNotFound
 	if _, _, err := svc.Latest(ctx, 7); !errors.Is(err, ErrNoSaves) {
 		t.Fatalf("Latest without saves = %v", err)
 	}
 	if _, _, err := svc.Get(ctx, 7, 5); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get unknown = %v", err)
+	}
+}
+
+func TestUploadReportsAbortFailure(t *testing.T) {
+	boom, abortBoom := errors.New("disk full"), errors.New("abort failed")
+	store, blobs := &scriptedStore{abortErr: abortBoom}, newMemBlobs()
+	blobs.putErr = boom
+	data, meta := validUpload(t)
+	_, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta)
+	if !errors.Is(err, boom) || !errors.Is(err, abortBoom) {
+		t.Fatalf("Upload = %v; want both write and abort errors", err)
+	}
+}
+
+func TestUploadBoundsBlobWriteByPendingTTL(t *testing.T) {
+	store, blobs := &scriptedStore{}, newMemBlobs()
+	data, meta := validUpload(t)
+	if _, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta); err != nil {
+		t.Fatal(err)
+	}
+	want := []time.Time{testNow.UTC().Add(time.Hour)}
+	if !slices.Equal(blobs.putDeadlines, want) {
+		t.Fatalf("Put deadlines = %v; want %v", blobs.putDeadlines, want)
 	}
 }

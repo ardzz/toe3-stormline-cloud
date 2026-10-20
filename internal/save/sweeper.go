@@ -7,10 +7,7 @@ import (
 	"github.com/ardzz/toe3-stormline-cloud/internal/blob"
 )
 
-const (
-	pendingTTL = time.Hour // uploads still pending after this are abandoned
-	sweepBatch = 100
-)
+const sweepBatch = 100
 
 // Sweeper deletes blobs that no revision references: abandoned uploads and pruned or deleted revisions.
 type Sweeper struct {
@@ -27,15 +24,17 @@ func NewSweeper(gc Collector, blobs blob.Store, now func() time.Time) *Sweeper {
 	return &Sweeper{gc: gc, blobs: blobs, now: now}
 }
 
-// Sweep expires uploads pending for more than an hour, then deletes every queued blob. It returns the number of blobs
-// deleted; on error the remaining keys stay queued for the next sweep.
+// Sweep expires uploads pending for longer than pendingTTL, then deletes every blob queued for longer than pendingTTL;
+// younger keys wait for a later sweep because an abandoned upload may still be writing them. It returns the number of
+// blobs deleted; on error the remaining keys stay queued for the next sweep.
 func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
-	if _, err := s.gc.ExpirePending(ctx, s.now().Add(-pendingTTL)); err != nil {
+	cutoff := s.now().Add(-pendingTTL)
+	if _, err := s.gc.ExpirePending(ctx, cutoff); err != nil {
 		return 0, err
 	}
 	deleted := 0
 	for {
-		keys, err := s.gc.GarbageKeys(ctx, sweepBatch)
+		keys, err := s.gc.GarbageKeys(ctx, cutoff, sweepBatch)
 		if err != nil {
 			return deleted, err
 		}

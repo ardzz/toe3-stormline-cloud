@@ -3,6 +3,7 @@ package save
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ardzz/toe3-stormline-cloud/internal/blob"
 )
@@ -12,13 +13,15 @@ import (
 type scriptedStore struct {
 	reserveErr        error
 	commitErr         error
+	abortErr          error
 	head, byRev       Revision
 	headErr, byRevErr error
 	list              []Revision
 
-	reserved []Revision
-	commits  [][4]int64 // userID, expectedHead, rev, keep
-	aborts   [][2]int64 // userID, rev
+	reserved     []Revision
+	commits      [][4]int64 // userID, expectedHead, rev, keep
+	aborts       [][2]int64 // userID, rev
+	abortCtxErrs []error
 }
 
 func (s *scriptedStore) Reserve(_ context.Context, userID, expectedHead int64, r Revision) (Revision, error) {
@@ -36,9 +39,10 @@ func (s *scriptedStore) Commit(_ context.Context, userID, expectedHead, rev int6
 	return s.commitErr
 }
 
-func (s *scriptedStore) Abort(_ context.Context, userID, rev int64) error {
+func (s *scriptedStore) Abort(ctx context.Context, userID, rev int64) error {
 	s.aborts = append(s.aborts, [2]int64{userID, rev})
-	return nil
+	s.abortCtxErrs = append(s.abortCtxErrs, ctx.Err())
+	return s.abortErr
 }
 
 func (s *scriptedStore) List(context.Context, int64) ([]Revision, error) { return s.list, nil }
@@ -49,17 +53,22 @@ func (s *scriptedStore) ByRev(context.Context, int64, int64) (Revision, error) {
 
 // memBlobs is an in-memory blob.Store with an injectable Put failure.
 type memBlobs struct {
-	mu      sync.Mutex
-	data    map[string][]byte
-	putErr  error
-	deleted []string
+	mu           sync.Mutex
+	data         map[string][]byte
+	putErr       error
+	getErr       error
+	putDeadlines []time.Time
+	deleted      []string
 }
 
 func newMemBlobs() *memBlobs { return &memBlobs{data: map[string][]byte{}} }
 
-func (m *memBlobs) Put(_ context.Context, key string, data []byte) error {
+func (m *memBlobs) Put(ctx context.Context, key string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if deadline, ok := ctx.Deadline(); ok {
+		m.putDeadlines = append(m.putDeadlines, deadline)
+	}
 	if m.putErr != nil {
 		return m.putErr
 	}
@@ -70,6 +79,9 @@ func (m *memBlobs) Put(_ context.Context, key string, data []byte) error {
 func (m *memBlobs) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	d, ok := m.data[key]
 	if !ok {
 		return nil, blob.ErrNotFound

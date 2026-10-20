@@ -43,15 +43,16 @@ func (s *Service) Upload(ctx context.Context, userID, expectedHead int64, data [
 	if r, err = s.store.Reserve(ctx, userID, expectedHead, r); err != nil {
 		return Revision{}, err
 	}
-	if err := s.blobs.Put(ctx, r.BlobKey, data); err != nil {
+	// A queued blob is kept for pendingTTL in case its upload is still writing, so the write must not outlive that.
+	putCtx, cancel := context.WithDeadline(ctx, r.CreatedAt.Add(pendingTTL))
+	err = s.blobs.Put(putCtx, r.BlobKey, data)
+	cancel()
+	if err != nil {
 		return Revision{}, errors.Join(err, s.store.Abort(context.WithoutCancel(ctx), userID, r.Rev))
 	}
-	err = s.store.Commit(ctx, userID, expectedHead, r.Rev, s.opts.Retention)
-	if errors.Is(err, ErrReservationLost) {
-		// No revision references the blob and the garbage queue does not list it, so remove it here.
-		return Revision{}, errors.Join(err, s.blobs.Delete(context.WithoutCancel(ctx), r.BlobKey))
-	}
-	if err != nil {
+	// Every Commit failure leaves the blob to the garbage queue: a stale or lost reservation has already queued it,
+	// and a pending row that survives a transient failure is expired into the queue.
+	if err := s.store.Commit(ctx, userID, expectedHead, r.Rev, s.opts.Retention); err != nil {
 		return Revision{}, err
 	}
 	return r, nil

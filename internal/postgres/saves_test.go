@@ -38,7 +38,7 @@ func sameRevision(a, b save.Revision) bool {
 
 func garbageKeys(t *testing.T, ctx context.Context, saves *postgres.Saves) []string {
 	t.Helper()
-	keys, err := saves.GarbageKeys(ctx, 1000)
+	keys, err := saves.GarbageKeys(ctx, time.Now().Add(time.Hour), 1000) // every key queued so far
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,5 +322,25 @@ func TestExpirePendingSkipsLockedRevisions(t *testing.T) {
 	slices.Sort(want)
 	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, want) {
 		t.Fatalf("garbage = %v, want %v", got, want)
+	}
+}
+
+func TestGarbageKeysHoldsRecentlyQueuedKeys(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	saves := postgres.NewSaves(pool)
+	uid := newSaveUser(t, ctx, postgres.NewUsers(pool), "alice")
+	r, err := saves.Reserve(ctx, uid, 0, pendingRev(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Abort(ctx, uid, r.Rev); err != nil {
+		t.Fatal(err)
+	}
+	if keys, err := saves.GarbageKeys(ctx, time.Now().Add(-time.Minute), 10); err != nil || len(keys) != 0 {
+		t.Fatalf("recent garbage = %v, %v; want none", keys, err)
+	}
+	if keys, err := saves.GarbageKeys(ctx, time.Now().Add(time.Minute), 10); err != nil || !slices.Equal(keys, []string{r.BlobKey}) {
+		t.Fatalf("eligible garbage = %v, %v; want [%s]", keys, err, r.BlobKey)
 	}
 }
