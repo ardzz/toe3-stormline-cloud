@@ -105,7 +105,7 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, err
 }
 
-// Delete removes a blob; a missing file is not an error.
+// Delete removes a blob durably; a missing file or directory is not an error.
 func (s *Store) Delete(ctx context.Context, key string) error {
 	p, err := s.path(key)
 	if err != nil {
@@ -115,6 +115,11 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	if err := s.root.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	// Persist the unlink before reporting success, because the caller then forgets the blob. A retry that finds the
+	// file already gone syncs again in case an earlier sync failed.
+	if err := syncDir(s.root, filepath.Dir(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil

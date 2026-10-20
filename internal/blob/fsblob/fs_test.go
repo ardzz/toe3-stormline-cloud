@@ -112,3 +112,25 @@ func TestStoreStaysInsideRootThroughSymlinks(t *testing.T) {
 		t.Errorf("outside/new stat = %v; want not found", err)
 	}
 }
+
+func TestDeleteOfMissingBlobSucceeds(t *testing.T) {
+	s, err := fsblob.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx := context.Background()
+	if err := s.Delete(ctx, "u/9/1.json.gz"); err != nil {
+		t.Fatalf("Delete with missing directory = %v; want nil", err)
+	}
+	if err := s.Put(ctx, "u/9/1.json.gz", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, "u/9/2.json.gz"); err != nil {
+		t.Fatalf("Delete with existing directory = %v; want nil", err)
+	}
+}
