@@ -10,11 +10,11 @@ import (
 // scriptedStore returns preset results and records the service's calls. The PostgreSQL store's semantics are
 // covered by its integration tests.
 type scriptedStore struct {
-	reserveErr       error
-	commitErr        error
-	head, byRev      Revision
+	reserveErr        error
+	commitErr         error
+	head, byRev       Revision
 	headErr, byRevErr error
-	list             []Revision
+	list              []Revision
 
 	reserved []Revision
 	commits  [][4]int64 // userID, expectedHead, rev, keep
@@ -41,9 +41,11 @@ func (s *scriptedStore) Abort(_ context.Context, userID, rev int64) error {
 	return nil
 }
 
-func (s *scriptedStore) List(context.Context, int64) ([]Revision, error)       { return s.list, nil }
-func (s *scriptedStore) Head(context.Context, int64) (Revision, error)         { return s.head, s.headErr }
-func (s *scriptedStore) ByRev(context.Context, int64, int64) (Revision, error) { return s.byRev, s.byRevErr }
+func (s *scriptedStore) List(context.Context, int64) ([]Revision, error) { return s.list, nil }
+func (s *scriptedStore) Head(context.Context, int64) (Revision, error)   { return s.head, s.headErr }
+func (s *scriptedStore) ByRev(context.Context, int64, int64) (Revision, error) {
+	return s.byRev, s.byRevErr
+}
 
 // memBlobs is an in-memory blob.Store with an injectable Put failure.
 type memBlobs struct {
