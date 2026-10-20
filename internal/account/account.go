@@ -33,6 +33,7 @@ type Users interface {
 // UserAdmin adds the operator-only user operations; each returns the user ID or ErrNotFound.
 // SetPassword and SetDisabled(..., true) revoke all of the account's sessions in the same atomic operation;
 // SetDisabled(..., false) leaves sessions untouched.
+// Delete removes the account with everything it owns.
 type UserAdmin interface {
 	Users
 	SetPassword(ctx context.Context, username, pwHash string) (int64, error)
