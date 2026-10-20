@@ -3,6 +3,8 @@ package fsblob
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -14,7 +16,7 @@ import (
 var _ blob.Store = (*Store)(nil)
 
 // Store keeps each blob in its own file below root.
-type Store struct{ root string }
+type Store struct{ root *os.Root }
 
 // New creates root if needed and returns a Store on it.
 func New(root string) (*Store, error) {
@@ -22,62 +24,69 @@ func New(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(abs, 0o750); err != nil {
+	if err := mkdirDurable(hostDirs{}, abs); err != nil {
 		return nil, err
 	}
-	return &Store{root: abs}, nil
+	r, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{root: r}, nil
 }
+
+// Close releases the storage root directory handle.
+func (s *Store) Close() error { return s.root.Close() }
 
 func (s *Store) path(key string) (string, error) {
 	if err := blob.CheckKey(key); err != nil {
 		return "", err
 	}
-	return filepath.Join(s.root, filepath.FromSlash(key)), nil
+	return filepath.FromSlash(key), nil
 }
 
 // Put writes data durably: a temporary file is synced, renamed into place and the directory is synced.
-func (s *Store) Put(ctx context.Context, key string, data []byte) error {
-	p, err := s.path(key)
+func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error) {
+	name, err := s.path(key)
 	if err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	dir := filepath.Dir(name)
+	if err := mkdirDurable(s.root, dir); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, ".tmp-"+hex.EncodeToString(random[:]))
+	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	renamed := false
 	defer func() {
 		if !renamed {
-			_ = os.Remove(tmp.Name())
+			retErr = errors.Join(retErr, s.root.Remove(tmp))
 		}
 	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(0o640)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
-	if err := tmp.Chmod(0o640); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
+	if err := s.root.Rename(tmp, name); err != nil {
 		return err
 	}
 	renamed = true
-	return syncDir(dir)
+	return syncDir(s.root, dir)
 }
 
 // Get reads a blob, mapping a missing file to blob.ErrNotFound.
@@ -89,7 +98,7 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(p)
+	data, err := s.root.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, blob.ErrNotFound
 	}
@@ -105,17 +114,8 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := s.root.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
-}
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
 }
