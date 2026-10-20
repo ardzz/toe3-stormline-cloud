@@ -16,8 +16,8 @@ var (
 	_ save.Collector = (*Saves)(nil)
 )
 
-// Saves is the PostgreSQL save-revision store and blob-garbage queue. Transactions lock the user row before any
-// revision row.
+// Saves is the PostgreSQL save-revision store and blob-garbage queue. Locks are taken in the order user row,
+// revision rows (ascending rev), garbage keys; expiry skips revision rows that are already locked.
 type Saves struct{ pool *pgxpool.Pool }
 
 // NewSaves returns a Saves store on pool.
@@ -150,12 +150,23 @@ func (s *Saves) ByRev(ctx context.Context, userID, rev int64) (save.Revision, er
 	return r, err
 }
 
-// ExpirePending removes pending revisions created before cutoff and queues their blobs.
+// ExpirePending removes pending revisions created before cutoff, queues their blobs and returns how many it removed.
+// Revisions locked by an in-flight upload are left for a later sweep.
 func (s *Saves) ExpirePending(ctx context.Context, cutoff time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `WITH gone AS (
-		DELETE FROM save_revisions WHERE state = 'pending' AND created_at < $1 RETURNING blob_key)
-		INSERT INTO blob_garbage (blob_key) SELECT blob_key FROM gone ON CONFLICT DO NOTHING`, cutoff)
-	return tag.RowsAffected(), err
+	var n int64
+	err := s.pool.QueryRow(ctx, `WITH due AS (
+		SELECT user_id, rev FROM save_revisions
+		WHERE state = 'pending' AND created_at < $1
+		ORDER BY user_id, rev
+		FOR UPDATE SKIP LOCKED),
+	gone AS (
+		DELETE FROM save_revisions s USING due
+		WHERE s.user_id = due.user_id AND s.rev = due.rev
+		RETURNING s.blob_key),
+	queued AS (
+		INSERT INTO blob_garbage (blob_key) SELECT blob_key FROM gone ON CONFLICT DO NOTHING)
+	SELECT count(*) FROM gone`, cutoff).Scan(&n)
+	return n, err
 }
 
 // GarbageKeys returns up to limit queued keys, oldest first.

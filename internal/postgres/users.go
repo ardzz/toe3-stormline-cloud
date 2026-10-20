@@ -58,12 +58,16 @@ func (u *Users) SetDisabled(ctx context.Context, username string, disabled bool)
 }
 
 // Delete removes an account with its sessions and save revisions. The revisions' blobs are queued for deletion in
-// the same transaction, before the cascade drops the rows that reference them.
+// the same transaction, before the cascade drops the rows that reference them; revision rows are locked before
+// their blobs are queued.
 func (u *Users) Delete(ctx context.Context, username string) (int64, error) {
 	var id int64
 	err := pgx.BeginFunc(ctx, u.pool, func(tx pgx.Tx) error {
 		var err error
 		if id, err = scanID(tx.QueryRow(ctx, `SELECT id FROM users WHERE username = $1 FOR UPDATE`, username)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM save_revisions WHERE user_id = $1 ORDER BY rev FOR UPDATE`, id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO blob_garbage (blob_key)

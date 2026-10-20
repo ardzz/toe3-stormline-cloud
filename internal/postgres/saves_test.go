@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/ardzz/toe3-stormline-cloud/internal/postgres"
 	"github.com/ardzz/toe3-stormline-cloud/internal/postgres/pgtest"
 	"github.com/ardzz/toe3-stormline-cloud/internal/save"
@@ -211,5 +213,114 @@ func TestUsersDeleteQueuesSaveBlobs(t *testing.T) {
 	}
 	if err := saves.Commit(ctx, uid, 1, r2.Rev, 20); !errors.Is(err, save.ErrReservationLost) {
 		t.Fatalf("Commit after account deletion = %v, want ErrReservationLost", err)
+	}
+}
+
+// waitForLockWait blocks until another session of this database waits on a lock.
+func waitForLockWait(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no session started waiting on a lock")
+}
+
+func TestUsersDeleteWaitsForInFlightRevisionCleanup(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	users, saves := postgres.NewUsers(pool), postgres.NewSaves(pool)
+	uid := newSaveUser(t, ctx, users, "alice")
+	r, err := saves.Reserve(ctx, uid, 0, pendingRev(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	// Hold the revision lock the way Abort and ExpirePending do before queueing its key.
+	if _, err := tx.Exec(ctx, `DELETE FROM save_revisions WHERE user_id = $1 AND rev = $2`, uid, r.Rev); err != nil {
+		t.Fatal(err)
+	}
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := users.Delete(ctx, "alice")
+		deleted <- err
+	}()
+	waitForLockWait(t, ctx, pool)
+	if _, err := tx.Exec(ctx, `INSERT INTO blob_garbage (blob_key) VALUES ($1) ON CONFLICT DO NOTHING`, r.BlobKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-deleted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("account deletion did not finish")
+	}
+	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, []string{r.BlobKey}) {
+		t.Fatalf("garbage = %v, want [%s]", got, r.BlobKey)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE username = 'alice'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("accounts left = %d, %v; want 0", n, err)
+	}
+}
+
+func TestExpirePendingSkipsLockedRevisions(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t)
+	saves := postgres.NewSaves(pool)
+	uid := newSaveUser(t, ctx, postgres.NewUsers(pool), "alice")
+	now := time.Now().UTC()
+	r1, err := saves.Reserve(ctx, uid, 0, pendingRev(now.Add(-2*time.Hour)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := saves.Reserve(ctx, uid, 0, pendingRev(now.Add(-2*time.Hour)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	// An upload committing r1 holds its row.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM save_revisions WHERE user_id = $1 AND rev = $2 FOR UPDATE`, uid, r1.Rev); err != nil {
+		t.Fatal(err)
+	}
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if n, err := saves.ExpirePending(tctx, now.Add(-time.Hour)); err != nil || n != 1 {
+		t.Fatalf("ExpirePending with locked revision = %d, %v; want 1, nil", n, err)
+	}
+	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, []string{r2.BlobKey}) {
+		t.Fatalf("garbage = %v, want [%s]", got, r2.BlobKey)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := saves.ExpirePending(ctx, now.Add(-time.Hour)); err != nil || n != 1 {
+		t.Fatalf("ExpirePending after unlocking = %d, %v; want 1, nil", n, err)
+	}
+	want := []string{r1.BlobKey, r2.BlobKey}
+	slices.Sort(want)
+	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, want) {
+		t.Fatalf("garbage = %v, want %v", got, want)
 	}
 }
