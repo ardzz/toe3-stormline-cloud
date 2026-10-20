@@ -82,7 +82,7 @@ func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error)
 	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
-	// Do not publish once the caller has given up: the key of an abandoned upload may already have been swept.
+	// Do not publish after the deadline: once an upload's window has passed, its queued key may already have been swept.
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -41,8 +41,7 @@ type Store interface {
 	// revisions beyond the newest keep for deletion. On *StaleError the pending revision is queued for deletion as
 	// well; ErrReservationLost means the pending revision no longer exists and its blob is already queued.
 	Commit(ctx context.Context, userID, expectedHead, rev int64, keep int) error
-	// Abort ends an upload that will not commit: it drops the pending revision if it still exists and queues the blob
-	// of BlobKey(userID, rev) unless a committed revision owns it.
+	// Abort queues a pending revision's blob for deletion; unknown revisions are a no-op.
 	Abort(ctx context.Context, userID, rev int64) error
 	// List returns committed revisions, newest first.
 	List(ctx context.Context, userID int64) ([]Revision, error)

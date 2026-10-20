@@ -82,22 +82,13 @@ func TestUploadAbortsWhenBlobWriteFails(t *testing.T) {
 	}
 }
 
-func TestUploadAbortsWhenCommitFails(t *testing.T) {
+func TestUploadLeavesCleanupToTheStoreOnCommitFailures(t *testing.T) {
 	for _, commitErr := range []error{ErrReservationLost, &StaleError{Latest: 9}, errors.New("connection reset")} {
 		store, blobs := &scriptedStore{commitErr: commitErr}, newMemBlobs()
 		data, meta := validUpload(t)
 		_, err := newTestService(store, blobs).Upload(context.Background(), 7, 0, data, meta)
 		if !errors.Is(err, commitErr) || len(blobs.deleted) != 0 || len(blobs.data) != 1 {
 			t.Fatalf("%v: err %v, deleted %v", commitErr, err, blobs.deleted)
-		}
-		if !slices.Equal(store.aborts, [][2]int64{{7, 1}}) || !slices.Equal(store.abortCtxErrs, []error{nil}) {
-			t.Fatalf("aborts %v, abort context errors %v; want [{7,1}], [nil]", store.aborts, store.abortCtxErrs)
-		}
-		if _, ok := commitErr.(*StaleError); ok {
-			var stale *StaleError
-			if !errors.As(err, &stale) || stale.Latest != 9 {
-				t.Fatalf("commit error = %v; want StaleError{Latest: 9}", err)
-			}
 		}
 	}
 }

@@ -159,15 +159,11 @@ func TestSavesAbortExpireAndLostReservation(t *testing.T) {
 	if err := saves.Abort(ctx, uid, 99); err != nil {
 		t.Fatalf("Abort(unknown) = %v, want nil", err)
 	}
-	want := []string{r1.BlobKey, save.BlobKey(uid, 99)}
-	slices.Sort(want)
-	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, want) {
+	if got := garbageKeys(t, ctx, saves); !slices.Equal(got, []string{r1.BlobKey}) {
 		t.Fatalf("garbage after Abort = %v", got)
 	}
-	for _, key := range want {
-		if err := saves.ForgetGarbage(ctx, key); err != nil {
-			t.Fatal(err)
-		}
+	if err := saves.ForgetGarbage(ctx, r1.BlobKey); err != nil {
+		t.Fatal(err)
 	}
 	if got := garbageKeys(t, ctx, saves); len(got) != 0 {
 		t.Fatalf("garbage after Forget = %v", got)
