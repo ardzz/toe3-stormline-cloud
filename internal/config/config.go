@@ -29,13 +29,17 @@ const (
 // MaxSnapshotLimit is the mod's hard download cap; the server limit may not exceed it.
 const MaxSnapshotLimit = 64 << 20
 
-// S3 configures an S3-compatible bucket. Credentials come from the standard AWS_* environment variables.
+// S3 configures an S3-compatible bucket. Credentials come from AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and the
+// optional AWS_SESSION_TOKEN.
 type S3 struct {
-	Endpoint  string
-	Bucket    string
-	Prefix    string
-	Region    string
-	PathStyle bool
+	Endpoint        string
+	Bucket          string
+	Prefix          string
+	Region          string
+	PathStyle       bool
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
 }
 
 // Config is the complete server configuration.
@@ -66,10 +70,13 @@ func Load(getenv func(string) string) (Config, error) {
 		DatabaseURL: str("TOE3_DATABASE_URL", ""),
 		BlobDir:     str("TOE3_BLOB_DIR", "/data/blobs"),
 		S3: S3{
-			Endpoint: str("TOE3_S3_ENDPOINT", ""),
-			Bucket:   str("TOE3_S3_BUCKET", ""),
-			Prefix:   str("TOE3_S3_PREFIX", ""),
-			Region:   str("TOE3_S3_REGION", ""),
+			Endpoint:        str("TOE3_S3_ENDPOINT", ""),
+			Bucket:          str("TOE3_S3_BUCKET", ""),
+			Prefix:          str("TOE3_S3_PREFIX", ""),
+			Region:          str("TOE3_S3_REGION", ""),
+			AccessKeyID:     str("AWS_ACCESS_KEY_ID", ""),
+			SecretAccessKey: str("AWS_SECRET_ACCESS_KEY", ""),
+			SessionToken:    str("AWS_SESSION_TOKEN", ""),
 		},
 	}
 	if c.DatabaseURL == "" {
@@ -117,6 +124,9 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		if c.S3.Region == "" {
 			errs = append(errs, errors.New("TOE3_S3_REGION is required when TOE3_BLOB_BACKEND=s3"))
+		}
+		if c.S3.AccessKeyID == "" || c.S3.SecretAccessKey == "" {
+			errs = append(errs, errors.New("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required when TOE3_BLOB_BACKEND=s3"))
 		}
 	default:
 		errs = append(errs, fmt.Errorf("TOE3_BLOB_BACKEND must be fs or s3, got %q", b))

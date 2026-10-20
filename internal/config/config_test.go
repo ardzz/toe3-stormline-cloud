@@ -64,15 +64,21 @@ func TestLoadSessionTTLMustExceedTouchInterval(t *testing.T) {
 	}
 }
 
-func TestLoadS3RequiresBucketAndRegion(t *testing.T) {
+func TestLoadS3RequiresBucketRegionAndCredentials(t *testing.T) {
 	_, err := Load(env(map[string]string{"TOE3_DATABASE_URL": "postgres://db/toe3", "TOE3_BLOB_BACKEND": "s3"}))
-	if err == nil || !strings.Contains(err.Error(), "TOE3_S3_BUCKET") || !strings.Contains(err.Error(), "TOE3_S3_REGION") {
-		t.Fatalf("err = %v, want bucket and region errors", err)
+	for _, want := range []string{"TOE3_S3_BUCKET", "TOE3_S3_REGION", "AWS_ACCESS_KEY_ID"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want mention of %s", err, want)
+		}
 	}
 	c, err := Load(env(map[string]string{"TOE3_DATABASE_URL": "postgres://db/toe3", "TOE3_BLOB_BACKEND": "s3",
-		"TOE3_S3_BUCKET": "saves", "TOE3_S3_REGION": "auto", "TOE3_S3_ENDPOINT": "https://s3.example", "TOE3_S3_PATH_STYLE": "true"}))
-	if err != nil || c.S3 != (S3{Endpoint: "https://s3.example", Bucket: "saves", Region: "auto", PathStyle: true}) {
-		t.Fatalf("Load = %+v, %v", c.S3, err)
+		"TOE3_S3_BUCKET": "saves", "TOE3_S3_REGION": "auto", "TOE3_S3_ENDPOINT": "https://s3.example",
+		"TOE3_S3_PATH_STYLE": "true", "TOE3_S3_PREFIX": "toe3",
+		"AWS_ACCESS_KEY_ID": "AKID", "AWS_SECRET_ACCESS_KEY": "secret", "AWS_SESSION_TOKEN": "session"}))
+	want := S3{Endpoint: "https://s3.example", Bucket: "saves", Prefix: "toe3", Region: "auto", PathStyle: true,
+		AccessKeyID: "AKID", SecretAccessKey: "secret", SessionToken: "session"}
+	if err != nil || c.S3 != want {
+		t.Fatalf("Load = %+v, %v; want %+v", c.S3, err, want)
 	}
 }
 
