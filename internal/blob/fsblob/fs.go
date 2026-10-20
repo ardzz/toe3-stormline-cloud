@@ -44,7 +44,7 @@ func (s *Store) path(key string) (string, error) {
 	return filepath.FromSlash(key), nil
 }
 
-// Put writes data durably: a temporary file is synced, renamed into place and the directory is synced.
+// Put writes data durably: a temporary file is synced and renamed into place, then every directory up to the root is synced.
 func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error) {
 	name, err := s.path(key)
 	if err != nil {
@@ -54,7 +54,7 @@ func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error)
 		return err
 	}
 	dir := filepath.Dir(name)
-	if err := mkdirDurable(s.root, dir); err != nil {
+	if err := s.root.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	var random [8]byte
@@ -86,7 +86,7 @@ func (s *Store) Put(ctx context.Context, key string, data []byte) (retErr error)
 		return err
 	}
 	renamed = true
-	return syncDir(s.root, dir)
+	return syncChain(s.root, dir)
 }
 
 // Get reads a blob, mapping a missing file to blob.ErrNotFound.

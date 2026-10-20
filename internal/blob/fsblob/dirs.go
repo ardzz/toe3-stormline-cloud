@@ -49,3 +49,17 @@ func syncDir(d dirs, dir string) error {
 	}
 	return errors.Join(f.Sync(), f.Close())
 }
+
+// syncChain syncs dir and each of its parents up to the root ".", so that every entry leading to a new file is
+// durable even if a concurrent Put created the directories and has not synced them yet.
+func syncChain(d dirs, dir string) error {
+	for {
+		if err := syncDir(d, dir); err != nil {
+			return err
+		}
+		if dir == "." {
+			return nil
+		}
+		dir = filepath.Dir(dir)
+	}
+}
