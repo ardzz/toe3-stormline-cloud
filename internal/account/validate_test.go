@@ -32,12 +32,3 @@ func TestValidatePasswordCountsRunes(t *testing.T) {
 		}
 	}
 }
-
-func TestCleanDevice(t *testing.T) {
-	if got := cleanDevice("  Pixel\x00 7\n "); got != "Pixel 7" {
-		t.Errorf("cleanDevice = %q, want %q", got, "Pixel 7")
-	}
-	if got := cleanDevice(strings.Repeat("é", 70)); len([]rune(got)) != 64 {
-		t.Errorf("cleanDevice kept %d runes, want 64", len([]rune(got)))
-	}
-}

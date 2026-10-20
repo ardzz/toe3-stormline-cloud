@@ -3,7 +3,6 @@ package account
 import (
 	"regexp"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -30,18 +29,4 @@ func ValidatePassword(p string) error {
 		return ErrInvalidPassword
 	}
 	return nil
-}
-
-// cleanDevice drops control characters and limits a client-supplied device label to 64 characters.
-func cleanDevice(s string) string {
-	s = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s))
-	if r := []rune(s); len(r) > maxDeviceRunes {
-		s = string(r[:maxDeviceRunes])
-	}
-	return s
 }
