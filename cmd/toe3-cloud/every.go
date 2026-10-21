@@ -5,19 +5,16 @@ import (
 	"time"
 )
 
-// every runs fn at once and then at each interval until ctx is done; it returns after fn's last run.
+// every runs fn at once and then at each interval until ctx is done. It never calls fn once ctx is done, and returns
+// after fn's last run.
 func every(ctx context.Context, interval time.Duration, fn func(context.Context)) {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
-	for {
+	for ctx.Err() == nil {
 		fn(ctx)
 		select {
 		case <-ctx.Done():
-			return
 		case <-tick.C:
-			if ctx.Err() != nil {
-				return
-			}
 		}
 	}
 }

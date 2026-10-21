@@ -59,3 +59,13 @@ func TestEveryRepeatsAtTheInterval(t *testing.T) {
 		t.Fatalf("runs = %d, want 3", n)
 	}
 }
+
+func TestEveryNeverRunsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ran := false
+	every(ctx, time.Millisecond, func(context.Context) { ran = true })
+	if ran {
+		t.Fatal("fn ran with an already-cancelled context")
+	}
+}
