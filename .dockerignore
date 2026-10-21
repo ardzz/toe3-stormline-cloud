@@ -1,0 +1,6 @@
+.git
+.github
+deploy
+api
+*.md
+redocly.yaml
