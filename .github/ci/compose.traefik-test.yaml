@@ -1,6 +1,6 @@
 # CI only: a stand-in for an operator's existing Traefik, used to test deploy/compose.traefik.yaml. Its certificate
 # resolver points at an unreachable ACME server, so Traefik serves its default self-signed certificate.
-name: traefik-test
+name: toe3-smoke-traefik
 
 services:
   traefik:
@@ -22,4 +22,4 @@ services:
 
 networks:
   edge:
-    name: toe3-cloud-edge
+    name: toe3-smoke-edge
