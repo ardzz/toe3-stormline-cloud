@@ -1,0 +1,27 @@
+# Caddy terminates HTTPS for TOE3_DOMAIN and obtains its certificate automatically.
+services:
+  caddy:
+    image: caddy:2.11.7
+    restart: unless-stopped
+    # Docker's local log driver rotates on its own (5 files of 20 MB per container).
+    logging:
+      driver: local
+    ports:
+      - "${TOE3_HTTP_PORT:-80}:80"
+      - "${TOE3_HTTPS_PORT:-443}:443"
+      - "${TOE3_HTTPS_PORT:-443}:443/udp"
+    environment:
+      TOE3_DOMAIN: ${TOE3_DOMAIN:?set TOE3_DOMAIN in .env}
+      CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:
+  caddy_config:

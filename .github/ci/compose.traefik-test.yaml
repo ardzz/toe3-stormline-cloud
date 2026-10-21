@@ -1,0 +1,25 @@
+# CI only: a stand-in for an operator's existing Traefik, used to test deploy/compose.traefik.yaml. Its certificate
+# resolver points at an unreachable ACME server, so Traefik serves its default self-signed certificate.
+name: toe3-smoke-traefik
+
+services:
+  traefik:
+    image: traefik:v3.7.15
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.caserver=https://127.0.0.1:1/directory
+      - --certificatesresolvers.letsencrypt.acme.email=ci@example.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/tmp/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+    ports:
+      - "8443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+
+networks:
+  edge:
+    name: toe3-smoke-edge

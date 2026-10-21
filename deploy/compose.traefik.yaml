@@ -1,0 +1,23 @@
+# Publishes the server through a Traefik instance you already run with the Docker provider. The app joins a network
+# that only it and Traefik share (TRAEFIK_NETWORK): create it once with `docker network create toe3-cloud-edge` and
+# add it to Traefik's networks. No other container can then reach the app directly, which keeps the trusted private
+# ranges in TOE3_TRUSTED_PROXIES safe. Do not attach a compress middleware unless it excludes application/gzip:
+# snapshots are already gzip files and are served without Content-Encoding on purpose.
+services:
+  app:
+    networks:
+      - backend
+      - edge
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-toe3-cloud-edge}
+      traefik.http.routers.toe3-cloud.rule: Host(`${TOE3_DOMAIN:?set TOE3_DOMAIN in .env}`)
+      traefik.http.routers.toe3-cloud.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.toe3-cloud.tls: "true"
+      traefik.http.routers.toe3-cloud.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.toe3-cloud.loadbalancer.server.port: "8080"
+
+networks:
+  edge:
+    name: ${TRAEFIK_NETWORK:-toe3-cloud-edge}
+    external: true
