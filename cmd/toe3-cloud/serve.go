@@ -41,8 +41,9 @@ func runServe(ctx context.Context, getenv func(string) string, stderr io.Writer)
 	return serve(ctx, cfg, ln, slog.New(slog.NewTextHandler(stderr, nil)))
 }
 
-// serve migrates the database, then serves the API on ln with periodic cleanup until ctx is done, and finally lets
-// in-flight requests finish for up to shutdownGrace. It closes ln.
+// serve migrates the database, then serves the API on ln with periodic cleanup until ctx is done or serving fails. It
+// then gives in-flight requests up to shutdownGrace, cancels the ones still running, and releases its dependencies
+// only after every handler has returned. It closes ln.
 func serve(ctx context.Context, cfg config.Config, ln net.Listener, log *slog.Logger) (err error) {
 	defer ln.Close()
 	if err := postgres.Migrate(ctx, cfg.DatabaseURL); err != nil {
@@ -63,15 +64,19 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, log *slog.Lo
 		auth.NewBackoff(time.Now, loginFreeFailures, loginFirstLockout, loginMaxLockout),
 		account.Options{RegistrationOpen: cfg.Registration == config.RegistrationOpen, SessionTTL: cfg.SessionTTL})
 	saves := postgres.NewSaves(pool)
+	reqCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	var handlers handlerTracker
 	srv := &http.Server{
-		Handler: httpapi.New(httpapi.Deps{
+		Handler: handlers.track(httpapi.New(httpapi.Deps{
 			Config: httpapi.Config{Registration: string(cfg.Registration), MaxSnapshotBytes: cfg.MaxSnapshotBytes,
 				TrustedProxies: cfg.TrustedProxies},
 			Accounts:  accounts,
 			Saves:     save.NewService(saves, blobs, save.Options{MaxBytes: cfg.MaxSnapshotBytes, Retention: cfg.Retention}),
 			AuthLimit: auth.NewRateLimiter(time.Now, authRequestsPerMinute, time.Minute),
 			Log:       log,
-		}),
+		})),
+		BaseContext:       func(net.Listener) context.Context { return reqCtx },
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       time.Minute,
 		WriteTimeout:      time.Minute,
@@ -90,16 +95,16 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, log *slog.Lo
 	log.Info("listening", "addr", ln.Addr().String(), "version", version, "blob_backend", string(cfg.BlobBackend))
 
 	select {
-	case err = <-served:
+	case err = <-served: // serving failed; requests already accepted may still be running
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
-		err = srv.Shutdown(shutdownCtx)
-		cancel()
-		<-served
-		log.Info("stopped")
+	}
+	stopServing(srv, shutdownGrace, cancelRequests, &handlers, log)
+	if err == nil {
+		err = <-served // Shutdown makes Serve return http.ErrServerClosed
 	}
 	stopLoop()
 	loop.Wait()
+	log.Info("stopped")
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
 	}
