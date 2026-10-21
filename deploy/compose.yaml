@@ -7,6 +7,9 @@ services:
     image: ghcr.io/ardzz/toe3-stormline-cloud:${TOE3_VERSION:-latest}
     build: ..
     restart: unless-stopped
+    # Docker's local log driver rotates on its own (5 files of 20 MB per container).
+    logging:
+      driver: local
     # Every TOE3_* and AWS_* setting in .env reaches the server; the lines below fix the ones the stack decides.
     env_file: .env
     environment:
@@ -26,6 +29,9 @@ services:
   postgres:
     image: postgres:18
     restart: unless-stopped
+    # Docker's local log driver rotates on its own (5 files of 20 MB per container).
+    logging:
+      driver: local
     environment:
       POSTGRES_USER: toe3
       POSTGRES_DB: toe3
