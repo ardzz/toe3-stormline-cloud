@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      - name: Tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - name: Vet
+        run: go vet ./... && go vet -tags integration ./...
+      - name: Unit tests
+        run: go test -race ./...
+      - name: Integration tests (PostgreSQL 18, S3Mock)
+        run: go test -p 1 -tags integration ./...
+
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint api/openapi.yaml
+        run: npx --yes @redocly/cli@2.66.0 lint api/openapi.yaml
+
+  deploy:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        proxy: [caddy, traefik]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compose stack behind ${{ matrix.proxy }}
+        run: .github/ci/deploy-smoke.sh ${{ matrix.proxy }}
