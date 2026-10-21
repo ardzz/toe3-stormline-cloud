@@ -66,6 +66,9 @@ func New(d Deps) http.Handler {
 // routes maps each path to its handlers by method.
 func (s *server) routes() map[string]methods {
 	return map[string]methods{
-		"/v1/health": {http.MethodGet: s.health},
+		"/v1/health":        {http.MethodGet: s.health},
+		"/v1/auth/register": {http.MethodPost: s.limited(s.register)},
+		"/v1/auth/login":    {http.MethodPost: s.limited(s.login)},
+		"/v1/auth/logout":   {http.MethodPost: s.limited(s.logout)},
 	}
 }
