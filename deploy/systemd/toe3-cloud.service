@@ -1,0 +1,45 @@
+[Unit]
+Description=TOE3 Stormline cloud-save server
+Documentation=https://github.com/ardzz/toe3-stormline-cloud
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/toe3-cloud serve
+# Filesystem blobs live in the state directory below; /etc/toe3-cloud/env may override this.
+Environment=TOE3_BLOB_DIR=/var/lib/toe3-cloud/blobs
+EnvironmentFile=/etc/toe3-cloud/env
+DynamicUser=yes
+StateDirectory=toe3-cloud
+StateDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=5s
+# The server gives in-flight requests 30 s, then cancels and joins them before exiting.
+TimeoutStopSec=60s
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target
