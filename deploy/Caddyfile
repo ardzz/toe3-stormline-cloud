@@ -1,5 +1,12 @@
-# Caddy replaces any X-Forwarded-For sent by clients with the real client address. Do not add `encode` for
+# Caddy replaces any X-Forwarded-For sent by clients with the real client address, unless the client is one of
+# CADDY_TRUSTED_PROXIES (space-separated ranges, e.g. Cloudflare's); empty trusts nothing. Do not add `encode` for
 # application/gzip: snapshots are already gzip files and are served without Content-Encoding on purpose.
+{
+	servers {
+		trusted_proxies static {$CADDY_TRUSTED_PROXIES}
+	}
+}
+
 {$TOE3_DOMAIN} {
 	reverse_proxy app:8080
 }

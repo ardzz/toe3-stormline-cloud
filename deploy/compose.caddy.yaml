@@ -9,6 +9,7 @@ services:
       - "${TOE3_HTTPS_PORT:-443}:443/udp"
     environment:
       TOE3_DOMAIN: ${TOE3_DOMAIN:?set TOE3_DOMAIN in .env}
+      CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
