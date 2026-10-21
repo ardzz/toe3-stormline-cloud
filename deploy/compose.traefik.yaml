@@ -1,0 +1,21 @@
+# Publishes the server through a Traefik instance you already run with the Docker provider; the app joins Traefik's
+# network. Do not attach a compress middleware unless it excludes application/gzip: snapshots are already gzip files
+# and are served without Content-Encoding on purpose.
+services:
+  app:
+    networks:
+      - backend
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.toe3-cloud.rule: Host(`${TOE3_DOMAIN:?set TOE3_DOMAIN in .env}`)
+      traefik.http.routers.toe3-cloud.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.toe3-cloud.tls: "true"
+      traefik.http.routers.toe3-cloud.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.toe3-cloud.loadbalancer.server.port: "8080"
+
+networks:
+  traefik:
+    name: ${TRAEFIK_NETWORK:-traefik}
+    external: true
