@@ -51,7 +51,8 @@ func TestServeEndToEnd(t *testing.T) {
 }
 
 // exerciseServer runs serve with env plus a fresh database, open registration and a retention of 2. It drives one
-// account through registration, uploads, a conflict, pruning, downloads, logout and login, then stops the server.
+// account through registration, uploads, a conflict, pruning, downloads, logout and login, and stops the server at
+// cleanup.
 func exerciseServer(t *testing.T, env map[string]string) {
 	env["TOE3_DATABASE_URL"] = pgtest.URL(t)
 	env["TOE3_REGISTRATION"] = "open"
@@ -65,9 +66,21 @@ func exerciseServer(t *testing.T, env map[string]string) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- serve(ctx, cfg, ln, slog.New(slog.DiscardHandler)) }()
+	// Registered after the database, bucket and blob directory, so it runs before their cleanup, also when the test
+	// fails early.
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("serve = %v, want nil after shutdown", err)
+			}
+		case <-time.After(shutdownGrace + 10*time.Second):
+			t.Error("serve did not return after cancellation")
+		}
+	})
 	c := &apiClient{t: t, base: "http://" + ln.Addr().String()}
 
 	if res := c.do(http.MethodGet, "/v1/health", nil, nil); res.status != http.StatusOK ||
@@ -146,16 +159,6 @@ func exerciseServer(t *testing.T, env map[string]string) {
 	c.token = c.session(c.do(http.MethodPost, "/v1/auth/login", strings.NewReader(credentials), nil), http.StatusOK)
 	if res = c.do(http.MethodGet, "/v1/saves", nil, nil); res.status != http.StatusOK {
 		t.Fatalf("list after login = %d %s", res.status, res.body)
-	}
-
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve = %v, want nil after shutdown", err)
-		}
-	case <-time.After(shutdownGrace + 10*time.Second):
-		t.Fatal("serve did not return after cancellation")
 	}
 }
 
