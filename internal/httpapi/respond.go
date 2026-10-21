@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 )
 
@@ -15,9 +17,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v) // the status is already sent; a failed write means the client has gone away
 }
 
-// readJSON decodes a small JSON request body into dst; any problem is errBadRequest.
+// readJSON decodes a small request body holding exactly one JSON value into dst; anything else, including trailing
+// data, is errBadRequest.
 func readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody)).Decode(dst); err != nil {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	if err := dec.Decode(dst); err != nil {
+		return errBadRequest
+	}
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
 		return errBadRequest
 	}
 	return nil

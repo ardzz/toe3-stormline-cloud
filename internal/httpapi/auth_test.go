@@ -55,13 +55,18 @@ func TestAuthServiceErrors(t *testing.T) {
 }
 
 func TestAuthRejectsMalformedJSON(t *testing.T) {
+	const valid = `{"username":"alice","password":"correct horse"}`
 	accounts := &fakeAccounts{}
 	h := newTestServer(Deps{Accounts: accounts, AuthLimit: &fakeLimiter{}})
-	for _, body := range []string{"", "{", `{"username": 7}`, strings.Repeat(" ", maxJSONBody) + "{}"} {
+	for _, body := range []string{"", "{", `{"username": 7}`, strings.Repeat(" ", maxJSONBody) + "{}",
+		valid + " trailing", valid + "{}", valid + strings.Repeat(" ", maxJSONBody)} {
 		wantError(t, call(h, postJSON("/v1/auth/login", body)), http.StatusBadRequest, "bad_request")
 	}
 	if len(accounts.calls) != 0 {
 		t.Fatalf("accounts called: %q", accounts.calls)
+	}
+	if rec := call(h, postJSON("/v1/auth/login", valid+"\n")); rec.Code != http.StatusOK {
+		t.Fatalf("body with a trailing newline = %d %s; want 200", rec.Code, rec.Body)
 	}
 }
 
