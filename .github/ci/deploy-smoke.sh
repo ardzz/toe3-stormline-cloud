@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Usage: .github/ci/deploy-smoke.sh caddy|traefik
 # Builds the image, starts the compose stack from deploy/.env.example behind the chosen proxy with a test
-# certificate, runs deploy/smoke.sh against it over HTTPS and removes everything again. It uses its own Compose
-# projects and network (toe3-smoke*), and refuses to run where deploy/.env exists, so it never touches a deployment.
+# certificate, runs deploy/smoke.sh against it over HTTPS and removes everything again. It creates and deletes
+# containers, images, networks and volumes, so it runs only on a disposable Docker daemon: in GitHub Actions, or
+# where TOE3_SMOKE_DISPOSABLE=1 confirms that nothing else on the daemon matters.
 set -euo pipefail
+
+if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${TOE3_SMOKE_DISPOSABLE:-}" != 1 ]; then
+	echo "deploy-smoke: run this only on a disposable Docker daemon; set TOE3_SMOKE_DISPOSABLE=1 to confirm" >&2
+	exit 2
+fi
 
 proxy=${1:?usage: deploy-smoke.sh caddy|traefik}
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -19,6 +25,11 @@ if [ -e "$deploy/.env" ]; then
 	echo "deploy-smoke: $deploy/.env exists; run this from a checkout that holds no deployment" >&2
 	exit 2
 fi
+# Settings exported in the shell would override the generated .env; drop every setting it names, and Compose's own.
+while read -r name; do
+	unset "$name"
+done < <(sed -n 's/^#\{0,1\}\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$deploy/.env.example")
+unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
 
 sed -e "s|^COMPOSE_FILE=.*|COMPOSE_FILE=$files|" \
 	-e 's|^TOE3_DOMAIN=.*|TOE3_DOMAIN=localhost|' \
@@ -38,7 +49,7 @@ cleanup() {
 	fi
 	stack down -v --remove-orphans || true
 	if [ "$proxy" = traefik ]; then
-		docker compose -f "$harness" down -v || true
+		docker compose -p toe3-smoke-traefik -f "$harness" down -v || true
 	fi
 	rm -f "$deploy/.env"
 	exit "$status"
@@ -46,7 +57,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [ "$proxy" = traefik ]; then
-	docker compose -f "$harness" up -d
+	docker compose -p toe3-smoke-traefik -f "$harness" up -d
 fi
 stack up -d --build --wait
 CURL_OPTS=-k "$deploy/smoke.sh" https://localhost:8443

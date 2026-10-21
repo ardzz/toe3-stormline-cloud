@@ -269,7 +269,8 @@ go test ./...                              # unit tests
 go test -race ./...
 go test -p 1 -tags integration ./...       # PostgreSQL 18 and S3Mock via Testcontainers
 npx --yes @redocly/cli@2.66.0 lint api/openapi.yaml
-.github/ci/deploy-smoke.sh caddy           # compose stack end to end (also: traefik); not in a deployed checkout
+# compose stack end to end behind caddy or traefik; only on a disposable Docker daemon
+TOE3_SMOKE_DISPOSABLE=1 .github/ci/deploy-smoke.sh caddy
 ```
 
 Releases are cut by pushing a `v*` tag: CI publishes linux/amd64 and linux/arm64 binaries with `SHA256SUMS` and a
