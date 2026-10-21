@@ -23,7 +23,7 @@ func clientKey(r *http.Request, trusted []netip.Prefix) string {
 		addr = next
 	}
 	if addr.Is6() {
-		p, _ := addr.WithZone("").Prefix(64) // cannot fail: a zoneless IPv6 address has 128 bits
+		p, _ := addr.Prefix(64) // cannot fail: parseHop drops zones and an IPv6 address has 128 bits
 		return p.String()
 	}
 	return addr.String()
@@ -40,16 +40,17 @@ func forwardedHops(values []string) []string {
 	return hops
 }
 
-// parseHop parses an address with or without a port.
+// parseHop parses an address with or without a port. It drops any IPv6 zone, which would otherwise make every
+// prefix check fail.
 func parseHop(s string) (netip.Addr, bool) {
 	if ap, err := netip.ParseAddrPort(s); err == nil {
-		return ap.Addr().Unmap(), true
+		return ap.Addr().Unmap().WithZone(""), true
 	}
 	a, err := netip.ParseAddr(s)
 	if err != nil {
 		return netip.Addr{}, false
 	}
-	return a.Unmap(), true
+	return a.Unmap().WithZone(""), true
 }
 
 func isTrusted(a netip.Addr, trusted []netip.Prefix) bool {

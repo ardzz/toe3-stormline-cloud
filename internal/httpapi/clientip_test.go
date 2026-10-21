@@ -8,7 +8,8 @@ import (
 )
 
 func TestClientKey(t *testing.T) {
-	proxies := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("fd00::/8")}
+	proxies := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("fd00::/8"),
+		netip.MustParsePrefix("fe80::/10")}
 	cases := []struct {
 		name    string
 		remote  string
@@ -28,6 +29,8 @@ func TestClientKey(t *testing.T) {
 		{"IPv4-mapped peer", "[::ffff:192.0.2.10]:1234", nil, proxies, "192.0.2.10"},
 		{"IPv6 client keyed by its /64", "[2001:db8:1:2:3:4:5:6]:1234", nil, proxies, "2001:db8:1:2::/64"},
 		{"IPv6 client behind an IPv6 proxy", "[fd00::1]:443", []string{"2001:db8:aa:bb::9"}, proxies, "2001:db8:aa:bb::/64"},
+		{"scoped trusted IPv6 peer", "[fe80::1%eth0]:443", []string{"203.0.113.5"}, proxies, "203.0.113.5"},
+		{"scoped IPv6 client keyed by its /64", "[fe80::1:2:3:4%eth0]:1234", nil, nil, "fe80::/64"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
