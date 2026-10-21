@@ -8,8 +8,8 @@ import (
 	"github.com/ardzz/toe3-stormline-cloud/internal/save"
 )
 
-// expectedHead reads the upload precondition: If-None-Match: * (no saves yet, head 0) or If-Match: "<rev>". Exactly
-// one of them, with one value, is accepted.
+// expectedHead reads the upload precondition: If-None-Match: * (no saves yet, head 0) or If-Match: "<rev>" with the
+// revision in canonical decimal form, as ^"[1-9][0-9]*"$. Exactly one of them, with one value, is accepted.
 func expectedHead(h http.Header) (int64, error) {
 	match, none := h.Values("If-Match"), h.Values("If-None-Match")
 	switch {
@@ -27,8 +27,12 @@ func expectedHead(h http.Header) (int64, error) {
 	if len(tag) < 3 || tag[0] != '"' || tag[len(tag)-1] != '"' {
 		return 0, errBadRequest
 	}
-	rev, err := strconv.ParseInt(tag[1:len(tag)-1], 10, 64)
-	if err != nil || rev < 1 {
+	digits := tag[1 : len(tag)-1]
+	if digits[0] < '1' || digits[0] > '9' || strings.TrimLeft(digits, "0123456789") != "" {
+		return 0, errBadRequest
+	}
+	rev, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
 		return 0, errBadRequest
 	}
 	return rev, nil
