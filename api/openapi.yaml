@@ -45,7 +45,9 @@ paths:
       tags: [auth]
       operationId: register
       summary: Create an account and log in
-      description: Only available when the server's registration mode is `open`.
+      description: |
+        Only available when the server's registration mode is `open`. If an operator changes the new account's
+        password, disables it or deletes it before its first session is issued, the answer is `invalid_credentials`.
       security: []
       requestBody:
         required: true
@@ -62,6 +64,8 @@ paths:
                 $ref: "#/components/schemas/Session"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
