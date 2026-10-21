@@ -18,8 +18,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - traefik
+      - edge
 
 networks:
-  traefik:
-    name: traefik
+  edge:
+    name: toe3-cloud-edge
