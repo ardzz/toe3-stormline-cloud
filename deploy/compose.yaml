@@ -1,0 +1,49 @@
+# The server and its database. Combine it with one proxy file (compose.caddy.yaml or compose.traefik.yaml); .env
+# selects them through COMPOSE_FILE, so plain `docker compose` commands work from this directory.
+name: toe3-cloud
+
+services:
+  app:
+    image: ghcr.io/ardzz/toe3-stormline-cloud:${TOE3_VERSION:-latest}
+    build: ..
+    restart: unless-stopped
+    # Every TOE3_* and AWS_* setting in .env reaches the server; the lines below fix the ones the stack decides.
+    env_file: .env
+    environment:
+      TOE3_DATABASE_URL: postgres://toe3:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/toe3?sslmode=disable
+      TOE3_LISTEN: 0.0.0.0:8080
+      TOE3_BLOB_DIR: /data/blobs
+    volumes:
+      - blobs:/data
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The server gives in-flight requests 30 s, then cancels and joins them before exiting.
+    stop_grace_period: 60s
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: toe3
+      POSTGRES_DB: toe3
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      # PostgreSQL 18 images keep their data under /var/lib/postgresql/18/docker.
+      - pgdata:/var/lib/postgresql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toe3 -d toe3"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+networks:
+  backend:
+
+volumes:
+  blobs:
+  pgdata:
