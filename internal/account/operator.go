@@ -46,7 +46,7 @@ func (o *Operator) SetDisabled(ctx context.Context, username string, disabled bo
 	return err
 }
 
-// Delete removes an account; the store cascades its sessions.
+// Delete removes an account; the store also removes its sessions and saves.
 func (o *Operator) Delete(ctx context.Context, username string) error {
 	u, err := NormalizeUsername(username)
 	if err != nil {

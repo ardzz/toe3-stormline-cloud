@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ardzz/toe3-stormline-cloud/internal/auth"
+	"github.com/ardzz/toe3-stormline-cloud/internal/label"
 )
 
 // touchInterval bounds how often authentication rewrites a session's sliding expiry.
@@ -137,7 +138,7 @@ func (s *Service) issue(ctx context.Context, userID int64, pwHash, device string
 	}
 	now := s.opts.Now()
 	exp := now.Add(s.opts.SessionTTL)
-	stored, err := s.sessions.Create(ctx, Session{TokenHash: hash, UserID: userID, Device: cleanDevice(device),
+	stored, err := s.sessions.Create(ctx, Session{TokenHash: hash, UserID: userID, Device: label.Clean(device, maxDeviceRunes),
 		CreatedAt: now, LastUsedAt: now, ExpiresAt: exp}, pwHash)
 	if err != nil {
 		return Issued{}, err
