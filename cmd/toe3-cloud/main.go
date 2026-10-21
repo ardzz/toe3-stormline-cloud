@@ -14,6 +14,7 @@ const usage = `usage: toe3-cloud <command> [args]
 
 commands:
   version                print the build version
+  serve                  serve the HTTP API on TOE3_LISTEN (applies migrations first)
   migrate                apply database migrations
   user add <name>        create an account (password from the prompt or the first stdin line)
   user passwd <name>     set a new password and revoke the account's sessions
@@ -39,6 +40,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdin i
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return 0
+	case "serve":
+		return exitCode(stderr, runServe(ctx, getenv, stderr))
 	case "migrate":
 		return exitCode(stderr, runMigrate(ctx, getenv))
 	case "user":

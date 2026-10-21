@@ -30,3 +30,13 @@ func TestRunRejectsUnknownAndMissingCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestRunServeReportsConfigErrorsBeforeListening(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run(context.Background(), []string{"serve"}, noEnv, strings.NewReader(""), &out, &errb); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "TOE3_DATABASE_URL is required") {
+		t.Fatalf("stderr %q lacks the configuration error", errb.String())
+	}
+}

@@ -1,0 +1,451 @@
+openapi: 3.1.0
+info:
+  title: TOE3 Stormline Cloud API
+  version: "1"
+  summary: Self-hosted cloud saves for the TOE3 Stormline mod.
+  description: |
+    Each account keeps a history of opaque, gzip-compressed save snapshots. Uploads are optimistic: the client
+    names the revision it last saw, and the server refuses the upload if the account has moved on since.
+
+    Every error response, including unknown routes (404) and unsupported methods (405, with an `Allow` header),
+    has the `Error` body. The server is plain HTTP behind an operator-run TLS proxy; clients must use HTTPS.
+servers:
+  - url: https://{host}
+    description: The operator's server
+    variables:
+      host:
+        default: cloud.example.com
+        description: Host (and optional port and path prefix) published by the operator's TLS proxy.
+tags:
+  - name: service
+    description: Server discovery.
+  - name: auth
+    description: Accounts and sessions. Each client IP may make 20 requests per minute to these endpoints.
+  - name: saves
+    description: Save snapshots and their revision history.
+security:
+  - bearer: []
+paths:
+  /v1/health:
+    get:
+      tags: [service]
+      operationId: getHealth
+      summary: Describe the server
+      description: Lets a client check a server URL before logging in.
+      security: []
+      responses:
+        "200":
+          description: The server is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Create an account and log in
+      description: |
+        Only available when the server's registration mode is `open`. If an operator changes the new account's
+        password, disables it or deletes it before its first session is issued, the answer is `invalid_credentials`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "201":
+          description: Account created; the new session's token is returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log in
+      description: |
+        Every credential problem (unknown user, wrong password, disabled account) yields the same
+        `invalid_credentials` error. Repeated failures lock the username out for an increasing time, answered
+        with `429`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "200":
+          description: Logged in; the new session's token is returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke the current session
+      description: Revokes the session whose token authorizes the request. An unknown token is not an error.
+      responses:
+        "204":
+          description: The session no longer exists.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /v1/saves:
+    get:
+      tags: [saves]
+      operationId: listSaves
+      summary: List the account's revisions
+      responses:
+        "200":
+          description: Committed revisions, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/Internal"
+    put:
+      tags: [saves]
+      operationId: uploadSave
+      summary: Upload a snapshot as the new head revision
+      description: |
+        Exactly one precondition is required: `If-None-Match: *` for the account's first upload, or
+        `If-Match: "<rev>"` naming the current head revision. The snapshot is stored as is and never
+        decompressed. The account keeps a fixed number of newest revisions; older ones are deleted.
+      parameters:
+        - name: If-Match
+          in: header
+          description: The head revision the client last saw, as a strong entity tag such as `"12"`.
+          schema:
+            type: string
+            pattern: '^"[1-9][0-9]*"$'
+        - name: If-None-Match
+          in: header
+          description: "`*` when the client believes the account has no saves yet."
+          schema:
+            type: string
+            const: "*"
+        - name: X-Toe3-Sha256
+          in: header
+          required: true
+          description: SHA-256 of the request body, in hex.
+          schema:
+            type: string
+            pattern: "^[0-9A-Fa-f]{64}$"
+        - name: X-Toe3-Reason
+          in: header
+          required: true
+          description: Why the snapshot was taken, e.g. `manual` or `auto`.
+          schema:
+            type: string
+            pattern: "^[a-z][a-z0-9-]{0,15}$"
+        - name: X-Toe3-Device
+          in: header
+          description: Device label; control characters are dropped and it is cut to 64 characters.
+          schema:
+            type: string
+        - name: X-Toe3-Game-Build
+          in: header
+          description: Game build number that produced the snapshot; 0 when absent.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 2147483647
+      requestBody:
+        required: true
+        description: The gzip-compressed snapshot, at most the server's `max_snapshot_bytes`.
+        content:
+          application/gzip:
+            schema:
+              type: string
+              contentMediaType: application/gzip
+      responses:
+        "201":
+          description: Stored as the new head revision.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Revision"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /v1/saves/latest:
+    get:
+      tags: [saves]
+      operationId: getLatestSave
+      summary: Download the head revision
+      responses:
+        "200":
+          $ref: "#/components/responses/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /v1/saves/{rev}:
+    get:
+      tags: [saves]
+      operationId: getSave
+      summary: Download one revision
+      parameters:
+        - name: rev
+          in: path
+          required: true
+          description: Revision number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          $ref: "#/components/responses/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Internal"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: A session token from `register` or `login`.
+  headers:
+    ETag:
+      description: The revision number as a strong entity tag, e.g. `"12"`.
+      schema:
+        type: string
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 1
+  schemas:
+    Health:
+      type: object
+      required: [service, api, registration, max_snapshot_bytes]
+      properties:
+        service:
+          type: string
+          const: toe3-cloud
+        api:
+          type: integer
+          const: 1
+        registration:
+          type: string
+          enum: [open, closed]
+        max_snapshot_bytes:
+          type: integer
+          description: Largest snapshot the server accepts.
+    Credentials:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Matches `^[a-z0-9_.-]{3,32}$` after trimming and lowercasing.
+        password:
+          type: string
+          description: 10 to 256 characters.
+        device:
+          type: string
+          description: Label of the device the session is for.
+    Session:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: Bearer token; only its SHA-256 is stored server-side.
+        expires_at:
+          type: string
+          format: date-time
+          description: Expiry; each use within the last hour slides it forward.
+    Revision:
+      type: object
+      required: [rev, created_at, size, sha256, device, reason, game_build]
+      properties:
+        rev:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        size:
+          type: integer
+          description: Snapshot size in bytes.
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        device:
+          type: string
+        reason:
+          type: string
+        game_build:
+          type: integer
+    RevisionList:
+      type: object
+      required: [revisions]
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Revision"
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Stable, machine-readable code.
+          enum:
+            - bad_request
+            - invalid_username
+            - invalid_password
+            - invalid_meta
+            - not_gzip
+            - sha_mismatch
+            - unauthorized
+            - invalid_credentials
+            - registration_closed
+            - not_found
+            - no_saves
+            - method_not_allowed
+            - username_taken
+            - stale
+            - too_large
+            - precondition_required
+            - rate_limited
+            - blob_missing
+            - internal
+        message:
+          type: string
+          description: Human-readable explanation.
+        latest:
+          type: integer
+          description: With `stale`, the account's current head revision.
+        max_snapshot_bytes:
+          type: integer
+          description: With `too_large`, the largest snapshot the server accepts.
+  responses:
+    Snapshot:
+      description: The gzip-compressed snapshot exactly as uploaded (no `Content-Encoding`).
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+        X-Toe3-Sha256:
+          description: SHA-256 of the body, lowercase hex.
+          schema:
+            type: string
+      content:
+        application/gzip:
+          schema:
+            type: string
+            contentMediaType: application/gzip
+    BadRequest:
+      description: "`bad_request`, `invalid_username`, `invalid_password`, `invalid_meta`, `not_gzip` or `sha_mismatch`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: "`unauthorized` (missing, unknown or expired token; with `WWW-Authenticate: Bearer`) or `invalid_credentials`."
+      headers:
+        WWW-Authenticate:
+          description: "`Bearer` when the token is the problem."
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: "`registration_closed`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: "`no_saves` (the account has none) or `not_found` (unknown revision)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: "`username_taken`, or `stale` with `latest` when the precondition does not name the head revision."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooLarge:
+      description: "`too_large` with `max_snapshot_bytes`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PreconditionRequired:
+      description: "`precondition_required`: neither `If-Match` nor `If-None-Match` was sent."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: "`rate_limited`: too many requests from this client, or too many failed logins for this username."
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Internal:
+      description: "`blob_missing` (the stored snapshot is gone) or `internal`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
