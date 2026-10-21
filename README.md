@@ -33,6 +33,7 @@ internet (Caddy uses them to obtain the certificate).
 git clone https://github.com/ardzz/toe3-stormline-cloud.git
 cd toe3-stormline-cloud/deploy
 cp .env.example .env
+chmod 600 .env
 ```
 
 Edit `.env`: set `TOE3_DOMAIN` to your domain and `POSTGRES_PASSWORD` to a generated secret of letters and digits
@@ -51,8 +52,9 @@ The stack runs three containers: `app` (this server), `postgres` (PostgreSQL 18)
 periodic cleanup. If the image for `TOE3_VERSION` cannot be pulled, Compose builds it from this checkout instead.
 
 Clients that reach Caddy over IPv6 show up as the Docker network's gateway, because Docker's userland proxy forwards
-IPv6 connections to the IPv4-only stack network; all of them then share one rate-limit budget. IPv4 clients, and
-every client behind Cloudflare, keep their own address.
+IPv6 connections to the IPv4-only stack network; all of them then share one rate-limit budget. IPv4 clients keep
+their own address, and so do clients behind Cloudflare as long as Cloudflare reaches the server over IPv4 (an A
+record for the origin). Container logs are rotated by Docker's `local` log driver.
 
 ## Behind an existing Traefik
 
@@ -233,9 +235,15 @@ hour after the dump contains every snapshot the dump refers to. Restore both tog
 
 ## Upgrades
 
-Change `TOE3_VERSION` in `.env` (or install the new binary) and restart; the database is migrated at start. A server
-refuses to start on a database migrated by a newer version, so going back to an older version means restoring a
-backup taken before the upgrade.
+Back up first (see above): the database is migrated when the new version starts, and a server refuses to start on a
+database migrated by a newer version, so going back to an older version means restoring that backup.
+
+- **Release image:** set `TOE3_VERSION` in `.env` to the new tag, then `docker compose pull app && docker compose up -d`.
+- **Built from this checkout:** update the checkout (`git pull`), then `docker compose up -d --build`.
+- **systemd:** install the new binary as described above, then `sudo systemctl restart toe3-cloud`.
+
+`docker compose restart` keeps the old image and settings; `docker compose up -d` recreates changed containers and
+keeps the volumes.
 
 On stop, the server finishes in-flight requests for up to 30 seconds, then cancels the rest and exits. Each request
 must finish within one minute; on very slow links, snapshots near the 64 MiB maximum may not.
@@ -261,7 +269,7 @@ go test ./...                              # unit tests
 go test -race ./...
 go test -p 1 -tags integration ./...       # PostgreSQL 18 and S3Mock via Testcontainers
 npx --yes @redocly/cli@2.66.0 lint api/openapi.yaml
-.github/ci/deploy-smoke.sh caddy           # the compose stack end to end (also: traefik)
+.github/ci/deploy-smoke.sh caddy           # compose stack end to end (also: traefik); not in a deployed checkout
 ```
 
 Releases are cut by pushing a `v*` tag: CI publishes linux/amd64 and linux/arm64 binaries with `SHA256SUMS` and a
